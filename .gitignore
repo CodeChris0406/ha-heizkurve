@@ -1,0 +1,7 @@
+# lokale Daten und Ergebnisse
+heizkurve/daten/
+heizkurve/config.toml
+heizkurve/config.vorschlag.toml
+*.html
+!heizkurve/bericht_vorlage.html
+__pycache__/

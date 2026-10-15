@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heizkurven-Analyse</title>
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+<style>
+:root {
+  --bg: #f6f5f2; --card: #ffffff; --fg: #1d1f21; --muted: #6b6f75; --line: #e3e1dc;
+  --aktion: #c2410c; --warnung: #b45309; --info: #2563eb; --ok: #15803d;
+  --c1: #2563eb; --c2: #d97706; --c3: #7c3aed; --c4: #0d9488; --grid: #ecebe7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141517; --card: #1e2023; --fg: #e8e8e6; --muted: #9a9ea5; --line: #2e3135;
+    --aktion: #fb923c; --warnung: #fbbf24; --info: #60a5fa; --ok: #4ade80;
+    --c1: #60a5fa; --c2: #fbbf24; --c3: #a78bfa; --c4: #2dd4bf; --grid: #2a2d31;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141517; --card: #1e2023; --fg: #e8e8e6; --muted: #9a9ea5; --line: #2e3135;
+  --aktion: #fb923c; --warnung: #fbbf24; --info: #60a5fa; --ok: #4ade80;
+  --c1: #60a5fa; --c2: #fbbf24; --c3: #a78bfa; --c4: #2dd4bf; --grid: #2a2d31;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 24px; margin: 0 0 4px; }
+h2 { font-size: 17px; margin: 32px 0 12px; }
+.sub { color: var(--muted); margin: 0 0 20px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.kpi { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.kpi b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
+.kpi span { color: var(--muted); font-size: 13px; }
+.hinweis { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--c);
+  border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; }
+.hinweis .t { font-weight: 600; display: flex; gap: 8px; align-items: baseline; }
+.hinweis .tag { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--c); font-weight: 700; }
+.hinweis p { margin: 4px 0 0; color: var(--fg); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+.chart { width: 100%; height: 380px; }
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line);
+  border-radius: 10px; overflow: hidden; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; }
+th { font-size: 13px; color: var(--muted); font-weight: 600; }
+.scroll { overflow-x: auto; }
+.neu { color: var(--aktion); font-weight: 700; }
+.leer { color: var(--muted); font-style: italic; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Heizkurven-Analyse</h1>
+  <p class="sub" id="sub"></p>
+  <div class="kpis" id="kpis"></div>
+  <h2>Empfehlungen</h2>
+  <div id="hinweise"></div>
+  <div id="kurvenblock"></div>
+  <h2>Heizkurve: Vorlauf über Außentemperatur</h2>
+  <div class="card"><div class="chart" id="ch_kurve"></div></div>
+  <h2>Räume</h2>
+  <div class="scroll"><table id="tab_raeume"></table></div>
+  <h2>Raumtemperaturen im Verlauf</h2>
+  <div class="card"><div class="chart" id="ch_zeit"></div></div>
+  <h2>Abweichung vom Soll über Außentemperatur</h2>
+  <p class="sub">Steigt die Punktwolke nach rechts an, sind die Räume bei Kälte zu kalt → Kurve steiler. Liegt sie insgesamt über/unter 0 → Kurve parallel verschieben.</p>
+  <div class="card"><div class="chart" id="ch_abw"></div></div>
+  <div id="taktblock"></div>
+  <div id="copblock"></div>
+</main>
+<script>
+const D = /*__DATEN__*/null;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const farben = () => [css('--c1'), css('--c2'), css('--c3'), css('--c4')];
+const fmt = (v, d = 1) => v == null ? '–' : Number(v).toLocaleString('de-DE', {minimumFractionDigits: d, maximumFractionDigits: d});
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function layout(extra = {}) {
+  return Object.assign({
+    paper_bgcolor: 'rgba(0,0,0,0)', plot_bgcolor: 'rgba(0,0,0,0)',
+    font: {color: css('--fg'), family: 'system-ui, sans-serif', size: 12},
+    margin: {l: 52, r: 52, t: 10, b: 44}, legend: {orientation: 'h', y: -0.18},
+    xaxis: {gridcolor: css('--grid'), zerolinecolor: css('--line')},
+    yaxis: {gridcolor: css('--grid'), zerolinecolor: css('--line')},
+    hovermode: 'closest'
+  }, extra);
+}
+function plot(id, tr, lay, c) { if (window.Plotly) Plotly.newPlot(id, tr, lay, c); else document.getElementById(id).innerHTML = '<p class="leer" style="padding:12px">Diagramm nicht verfügbar (Diagramm-Bibliothek nicht geladen).</p>'; }
+const cfg = {displaylogo: false, responsive: true, modeBarButtonsToRemove: ['lasso2d', 'select2d']};
+
+function render() {
+  const m = D.meta, f = farben();
+  document.getElementById('sub').textContent =
+    `Zeitraum ${m.von} – ${m.bis} (${fmt(m.tage)} Tage) · erstellt ${D.erstellt}`;
+  const kp = [];
+  if (m.aussen_min != null) kp.push([`${fmt(m.aussen_min)} … ${fmt(m.aussen_max)} °C`, 'Außentemperatur']);
+  if (m.kurve) kp.push([`${fmt(m.kurve.fp_akt)} / ${fmt(m.kurve.ep_akt)} °C`, 'Fußpunkt / Endpunkt aktuell']);
+  if (m.fuehrungsraum) kp.push([esc(m.fuehrungsraum), 'Führungsraum']);
+  if (m.takten) kp.push([`${m.takten.starts_tag} / ${m.takten.lauf_min} min`, 'Starts pro Tag / Laufzeit']);
+  if (m.spreizung != null) kp.push([`${fmt(m.spreizung)} K`, 'Spreizung VL–RL']);
+  if (m.strom_tag != null) kp.push([`${fmt(m.strom_tag)} kWh`, 'Strom WP pro Tag']);
+  if (m.cop != null) kp.push([fmt(m.cop, 2), 'Arbeitszahl']);
+  document.getElementById('kpis').innerHTML = kp.map(([v, l]) => `<div class="kpi"><b>${v}</b><span>${l}</span></div>`).join('');
+
+  const ord = ['aktion', 'warnung', 'info', 'ok'];
+  const lab = {aktion: 'Ändern', warnung: 'Achtung', info: 'Hinweis', ok: 'OK'};
+  document.getElementById('hinweise').innerHTML = [...D.hinweise]
+    .sort((a, b) => ord.indexOf(a.stufe) - ord.indexOf(b.stufe))
+    .map(h => `<div class="hinweis" style="--c: var(--${h.stufe})"><div class="t"><span class="tag">${lab[h.stufe]}</span>${esc(h.titel)}</div><p>${h.text}</p></div>`)
+    .join('') || '<p class="leer">Keine Hinweise.</p>';
+
+  if (m.kurve) {
+    const k = m.kurve, c = (a, b) => a !== b ? `<span class="neu">${fmt(b)} °C</span>` : `${fmt(b)} °C`;
+    document.getElementById('kurvenblock').innerHTML = `<h2>Einstellungen Buderus-Regler (Heizkreis 1)</h2>
+      <div class="scroll"><table><tr><th>Parameter</th><th>aktuell</th><th>Vorschlag</th></tr>
+      <tr><td>Fußpunkt (Vorlauf bei +20 °C außen)</td><td>${fmt(k.fp_akt)} °C</td><td>${c(k.fp_akt, k.fp_neu)}</td></tr>
+      <tr><td>Endpunkt / Auslegungstemperatur (bei ${fmt(k.norm)} °C außen)</td><td>${fmt(k.ep_akt)} °C</td><td>${c(k.ep_akt, k.ep_neu)}</td></tr>
+      </table></div><p class="sub">Aktuelle Kurve: ${esc(k.quelle)}. Bewertet wurde der Bereich ${fmt(k.tmin)} … ${fmt(k.tmax)} °C außen; Werte bei Norm-Außentemperatur sind hochgerechnet.</p>`;
+  }
+
+  const C = D.charts, tr = [];
+  if (C.kurve_punkte) tr.push({x: C.kurve_punkte.x, y: C.kurve_punkte.y, text: C.kurve_punkte.t, mode: 'markers', type: 'scatter',
+    name: `Messung (${C.kurve_punkte.quelle})`, marker: {color: f[0], size: 5, opacity: .45}});
+  if (C.kurve_akt) tr.push({x: C.kurve_akt.x, y: C.kurve_akt.y, mode: 'lines', name: 'Kurve aktuell', line: {color: css('--muted'), width: 2}});
+  if (C.kurve_neu) tr.push({x: C.kurve_neu.x, y: C.kurve_neu.y, mode: 'lines', name: 'Kurve Vorschlag', line: {color: css('--aktion'), width: 3, dash: 'dash'}});
+  if (tr.length) plot('ch_kurve', tr, layout({xaxis: {title: 'Außentemperatur (12 h Mittel) °C', autorange: 'reversed', gridcolor: css('--grid')},
+    yaxis: {title: 'Vorlauf °C', gridcolor: css('--grid')}}), cfg);
+  else document.getElementById('ch_kurve').outerHTML = '<p class="leer">Keine Vorlaufdaten.</p>';
+
+  const z = C.zeit, zt = [];
+  z.raeume.forEach((r, i) => {
+    zt.push({x: z.t, y: r.ist, name: r.name, mode: 'lines', line: {color: f[i % 4], width: 1.6}});
+    if (r.soll.some(v => v != null)) zt.push({x: z.t, y: r.soll, name: r.name + ' Soll', mode: 'lines', line: {color: f[i % 4], width: 1, dash: 'dot'}, showlegend: false, hoverinfo: 'skip'});
+  });
+  zt.push({x: z.t, y: z.aussen, name: 'Außen', yaxis: 'y2', mode: 'lines', line: {color: css('--muted'), width: 1}});
+  plot('ch_zeit', zt, layout({hovermode: 'x unified', yaxis: {title: 'Raum °C', gridcolor: css('--grid')},
+    yaxis2: {title: 'Außen °C', overlaying: 'y', side: 'right', showgrid: false}}), cfg);
+
+  const rows = D.tabellen.raeume || [];
+  document.getElementById('tab_raeume').innerHTML = '<tr><th>Raum</th><th>Ø Ist</th><th>Ø Soll</th><th>Abweichung</th><th>zu kalt</th><th>zu warm</th><th>Trend je K kälter</th><th>Nachtabsenkung</th></tr>' +
+    rows.map(r => `<tr><td>${esc(r.name)}${r.name === m.fuehrungsraum ? ' ★' : ''}</td><td>${fmt(r.ist_mittel)}</td><td>${fmt(r.soll_mittel)}</td>
+      <td>${r.abw == null ? '–' : (r.abw > 0 ? '+' : '') + fmt(r.abw, 2) + ' K'}</td><td>${r.zu_kalt == null ? '–' : r.zu_kalt + ' %'}</td>
+      <td>${r.zu_warm == null ? '–' : r.zu_warm + ' %'}</td><td>${r.fit ? fmt(-r.fit.b, 2) + ' K' : '–'}</td><td>${r.absenkung ? fmt(r.absenkung) + ' K' : '–'}</td></tr>`).join('');
+
+  const at = D.charts.abweichung.map((r, i) => ({x: r.x, y: r.y, name: r.name, mode: 'markers', type: 'scatter', marker: {color: f[i % 4], size: 5, opacity: .5}}));
+  plot('ch_abw', at, layout({xaxis: {title: 'Außentemperatur (12 h Mittel) °C', gridcolor: css('--grid')},
+    yaxis: {title: 'Ist − Soll (K)', gridcolor: css('--grid'), zerolinecolor: css('--fg'), zerolinewidth: 1.5}}), cfg);
+
+  if (C.takten) {
+    document.getElementById('taktblock').innerHTML = '<h2>Verdichter-Starts pro Tag</h2><div class="card"><div class="chart" id="ch_takt"></div></div>';
+    plot('ch_takt', [
+      {x: C.takten.tag, y: C.takten.starts, type: 'bar', name: 'Starts', marker: {color: f[0]}},
+      {x: C.takten.tag, y: C.takten.median, mode: 'lines+markers', name: 'Laufzeit Median (min)', yaxis: 'y', line: {color: f[1]}},
+      {x: C.takten.tag, y: C.takten.aussen, mode: 'lines', name: 'Außen Ø °C', yaxis: 'y2', line: {color: css('--muted'), dash: 'dot'}}
+    ], layout({hovermode: 'x unified', yaxis: {title: 'Starts / min', gridcolor: css('--grid')}, yaxis2: {title: 'Außen °C', overlaying: 'y', side: 'right', showgrid: false}}), cfg);
+  }
+  if (C.cop) {
+    document.getElementById('copblock').innerHTML = '<h2>Tages-Arbeitszahl</h2><div class="card"><div class="chart" id="ch_cop"></div></div>';
+    plot('ch_cop', [{x: C.cop.aussen, y: C.cop.cop, text: C.cop.tag, mode: 'markers', marker: {color: f[3], size: 9}, name: 'Tag'}],
+      layout({xaxis: {title: 'Außen Ø °C', gridcolor: css('--grid')}, yaxis: {title: 'COP', gridcolor: css('--grid')}}), cfg);
+  }
+}
+render();
+</script>
+</body>
+</html>

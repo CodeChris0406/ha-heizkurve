@@ -1,0 +1,101 @@
+name: Heizkurven-Analyse
+version: "0.7.0"
+slug: heizkurve
+description: Wertet Wärmepumpe und Raumthermostate aus und schlägt Änderungen an der Heizkurve vor
+arch:
+  - amd64
+  - aarch64
+init: false
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:heat-pump-outline
+panel_title: Heizkurve
+options:
+  auswerten_um: 18
+  wochenbericht_tag: So
+  push_taeglich: true
+  benachrichtigung: ""
+  auswerten_tage: 21
+  aufbewahren_tage: 90
+  heizsystem: heizkoerper
+  raum_soll: 21.0
+  heizgrenze: 15.0
+  komfort_von: 9
+  komfort_bis: 20
+  fusspunkt: 0.0
+  endpunkt: 0.0
+  norm_aussen: -10.0
+  max_vorlauf: 45.0
+  kompressor_schwelle_w: 150.0
+  pv_steuerung: false
+  pv_sollwert: ""
+  pv_akku_soc: ""
+  pv_netzleistung: ""
+  pv_basis: 20.0
+  pv_min_anhebung: 1
+  pv_max_anhebung: 4
+  pv_akku_min: 90
+  pv_ueberschuss_w: 1000
+  pv_bezug_w: 100
+  pv_schritt_w: 500
+  pv_heizgrenze: 18.0
+  sensoren:
+    aussen: ""
+    vorlauf: ""
+    vorlauf_soll: ""
+    ruecklauf: ""
+    kompressor: ""
+    kompressor_starts: ""
+    strom_leistung: ""
+    heizstab_leistung: ""
+    strom_energie: ""
+    waerme_energie: ""
+    wp_raum_soll: ""
+  raeume: []
+schema:
+  auswerten_um: int(0,23)
+  wochenbericht_tag: list(Mo|Di|Mi|Do|Fr|Sa|So)
+  push_taeglich: bool
+  benachrichtigung: str
+  auswerten_tage: int(3,90)
+  aufbewahren_tage: int(14,365)
+  heizsystem: list(fussboden|heizkoerper)
+  raum_soll: float
+  heizgrenze: float
+  komfort_von: int(0,23)
+  komfort_bis: int(1,24)
+  fusspunkt: float
+  endpunkt: float
+  norm_aussen: float
+  max_vorlauf: float
+  kompressor_schwelle_w: float
+  pv_steuerung: bool
+  pv_sollwert: str
+  pv_akku_soc: str
+  pv_netzleistung: str
+  pv_basis: float
+  pv_min_anhebung: int(1,5)
+  pv_max_anhebung: int(1,5)
+  pv_akku_min: int(0,100)
+  pv_ueberschuss_w: int
+  pv_bezug_w: int
+  pv_schritt_w: int
+  pv_heizgrenze: float
+  sensoren:
+    aussen: str
+    vorlauf: str
+    vorlauf_soll: str
+    ruecklauf: str
+    kompressor: str
+    kompressor_starts: str
+    strom_leistung: str
+    heizstab_leistung: str
+    strom_energie: str
+    waerme_energie: str
+    wp_raum_soll: str
+  raeume:
+    - name: str
+      entity: str
+      soll: float?
+      fuehrend: bool?
