@@ -99,7 +99,13 @@ class PVRegler:
         if any(pd.isna(v) for v in (soll, phase, soc, netz)):
             return
         ueberschuss = heizstab - netz  # der Heizstab läuft nur mit Überschuss, zählt also dazu
-        werte = {"ueberschuss_w": round(ueberschuss), "akku_soc": soc, "netz_w": round(netz)}
+        entladung = 0.0  # W, die der Akku gerade abgibt
+        if o.get("pv_akku_leistung"):
+            akku = self._wert(o["pv_akku_leistung"])
+            if not pd.isna(akku):
+                entladung = max(-akku if o.get("pv_akku_laden_positiv", True) else akku, 0.0)
+        werte = {"ueberschuss_w": round(ueberschuss), "akku_soc": soc, "netz_w": round(netz),
+                 "akku_entladung_w": round(entladung)}
         seit_aenderung = self._seit(self.geaendert, jetzt) if self.geaendert is not None else float("inf")
         if self.status_zeit is None or self._seit(self.status_zeit, jetzt) >= 10:
             self._status(werte)
@@ -127,7 +133,9 @@ class PVRegler:
         if soc < self.SOC_AUS:
             return self._setzen(0, jetzt, f"Akku unter {self.SOC_AUS} %", werte)
 
-        self.runter_seit = (self.runter_seit or jetzt) if netz > o["pv_bezug_w"] else None
+        # eine Stufe zurück, sobald Strom aus dem Netz oder aus dem Akku kommt
+        zu_wenig = netz > o["pv_bezug_w"] or entladung > o.get("pv_entladung_w", 100)
+        self.runter_seit = (self.runter_seit or jetzt) if zu_wenig else None
         self.hoch_seit = (self.hoch_seit or jetzt) if ueberschuss >= o["pv_schritt_w"] else None
         if seit_aenderung < self.SCHRITT_MIN:
             return
@@ -135,7 +143,8 @@ class PVRegler:
             neu = self.stufe - 1 if self.stufe > stufe_min else 0
             if neu == 0 and self._seit(self.aktiv_seit, jetzt) < self.MIN_LAUF_MIN:
                 return
-            self._setzen(neu, jetzt, f"Netzbezug {netz:.0f} W", werte)
+            grund = f"Netzbezug {netz:.0f} W" if netz > o["pv_bezug_w"] else f"Akku entlädt {entladung:.0f} W"
+            self._setzen(neu, jetzt, grund, werte)
         elif (self.hoch_seit is not None and self._seit(self.hoch_seit, jetzt) >= self.HOCH_MIN
               and self.stufe < stufe_max):
             self._setzen(self.stufe + 1, jetzt, f"weiter Überschuss {ueberschuss:.0f} W", werte)

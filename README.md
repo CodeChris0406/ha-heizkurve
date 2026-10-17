@@ -26,7 +26,8 @@ Hebt den Komfort-Sollwert der Wärmepumpe in 1-K-Stufen an, solange Solarstrom �
 - **Start** (`pv_basis` + `pv_min_anhebung`): Akku ≥ `pv_akku_min`, Überschuss ≥ `pv_ueberschuss_w` seit 10 min,
   Wärmepumpe im Heizbetrieb, außen unter `pv_heizgrenze` (Standard 18 °C). Überschuss = Einspeisung + Heizstab-Leistung.
 - **Nächste Stufe** (bis `pv_max_anhebung`): weiterhin ≥ `pv_schritt_w` Überschuss seit 10 min.
-- **Eine Stufe zurück**: Netzbezug > `pv_bezug_w` seit 5 min. Zwischen zwei Änderungen mindestens 15 min,
+- **Eine Stufe zurück**: Netzbezug > `pv_bezug_w` oder Akku-Entladung > `pv_entladung_w` seit 5 min
+  (Akku-Leistung aus `pv_akku_leistung`, Vorzeichen über `pv_akku_laden_positiv`). Zwischen zwei Änderungen mindestens 15 min,
   zurück auf den Normalwert frühestens nach 30 min. Sofort zurück bei Absenkbetrieb oder Akku < 85 %.
 - Der Regler hat das letzte Wort: Weicht der Sollwert von seiner Stufe ab (z. B. in der App geändert), setzt er ihn
   zurück. Für manuelle Tests `pv_steuerung` vorübergehend ausschalten.
