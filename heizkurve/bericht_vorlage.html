@@ -63,6 +63,7 @@ th { font-size: 13px; color: var(--muted); font-weight: 600; }
   <div class="card"><div class="chart" id="ch_kurve"></div></div>
   <h2>Räume</h2>
   <div class="scroll"><table id="tab_raeume"></table></div>
+  <div id="hydraulikblock"></div>
   <h2>Raumtemperaturen im Verlauf</h2>
   <div class="card"><div class="chart" id="ch_zeit"></div></div>
   <h2>Abweichung vom Soll über Außentemperatur</h2>
@@ -144,6 +145,20 @@ function render() {
     rows.map(r => `<tr><td>${esc(r.name)}${r.name === m.fuehrungsraum ? ' ★' : ''}</td><td>${fmt(r.ist_mittel)}</td><td>${fmt(r.soll_mittel)}</td>
       <td>${r.abw == null ? '–' : (r.abw > 0 ? '+' : '') + fmt(r.abw, 2) + ' K'}</td><td>${r.zu_kalt == null ? '–' : r.zu_kalt + ' %'}</td>
       <td>${r.zu_warm == null ? '–' : r.zu_warm + ' %'}</td><td>${r.fit ? fmt(-r.fit.b, 2) + ' K' : '–'}</td><td>${r.absenkung ? fmt(r.absenkung) + ' K' : '–'}</td></tr>`).join('');
+
+  const hy = D.tabellen.hydraulik || [];
+  if (hy.length) {
+    const vn = hy.some(r => r.vorher != null || r.nachher != null);
+    const dauer = v => v == null ? '–' : (v >= 360 ? '> 6 h' : (v >= 60 ? `${Math.floor(v / 60)} h ${v % 60} min` : `${v} min`));
+    const sp = m.spreizung != null ? `<p class="sub">Spreizung bei laufendem Verdichter: <b>${fmt(m.spreizung)} K</b> (für Heizkörper üblich 4–6 K).</p>` : '';
+    document.getElementById('hydraulikblock').innerHTML = `<h2>Hydraulik-Check</h2>
+      <p class="sub">Liegen die Räume unterschiedlich weit von ihrem Soll entfernt, hilft keine Kurve, sondern der Abgleich
+      (Voreinstellung an den Thermostatventilen).${m.anlage_geaendert ? ` Letzte Änderung an der Anlage: ${esc(m.anlage_geaendert)}.` : ''}</p>${sp}
+      <div class="scroll"><table><tr><th>Raum</th><th>Soll</th><th>Abweichung</th><th>Aufheizen morgens</th><th>Thermostat regelt ab</th>${vn ? '<th>Ø vorher</th><th>Ø nachher</th>' : ''}</tr>` +
+      hy.map(r => `<tr><td>${esc(r.name)}</td><td>${fmt(r.soll)}</td><td>${r.abw == null ? '–' : (r.abw > 0 ? '+' : '') + fmt(r.abw, 2) + ' K'}</td>
+        <td>${dauer(r.aufheizen_min)}</td><td>${r.drosselt == null ? '–' : r.drosselt + ' %'}</td>${vn ? `<td>${fmt(r.vorher)}</td><td>${fmt(r.nachher)}</td>` : ''}</tr>`).join('') +
+      '</table></div>';
+  }
 
   const at = D.charts.abweichung.map((r, i) => ({x: r.x, y: r.y, name: r.name, mode: 'markers', type: 'scatter', marker: {color: f[i % 4], size: 5, opacity: .5}}));
   plot('ch_abw', at, layout({xaxis: {title: 'Außentemperatur (12 h Mittel) °C', gridcolor: css('--grid')},

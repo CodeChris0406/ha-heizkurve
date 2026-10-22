@@ -37,6 +37,7 @@ class PVRegler:
         self.geaendert, self.aktiv_seit = ts("geaendert"), ts("aktiv_seit")
         self.ein_seit = self.hoch_seit = self.runter_seit = None
         self.gesendet = self.status_zeit = None
+        self.pausiert = False
         self.grund = z.get("grund", "Regler gestartet")
 
     # ---- Home Assistant
@@ -74,7 +75,7 @@ class PVRegler:
         iso = lambda t: t.isoformat() if t is not None else None
         self.status_zeit = self._jetzt()
         self.sess.post(f"{self.base}/api/states/{STATUS_SENSOR}", timeout=30, json={
-            "state": "an" if self.stufe > 0 else "aus",
+            "state": "pausiert" if self.pausiert else ("an" if self.stufe > 0 else "aus"),
             "attributes": {"friendly_name": "Heizkurve PV-Anhebung", "icon": "mdi:solar-power-variant",
                            "stufe_k": self.stufe, "sollwert": float(self.o["pv_basis"]) + self.stufe,
                            "grund": self.grund, "seit": iso(self.geaendert), **werte}})
@@ -84,9 +85,28 @@ class PVRegler:
         return (jetzt - start).total_seconds() / 60 if start is not None else 0.0
 
     # ---- Regelung
+    def _schalter_aus(self):
+        """True, wenn der Pause-Schalter in HA auf „aus“ steht (fehlender Schalter = Regler aktiv)."""
+        if not self.o.get("pv_schalter"):
+            return False
+        r = self.sess.get(f"{self.base}/api/states/{self.o['pv_schalter']}", timeout=20)
+        return r.status_code == 200 and r.json().get("state") == "off"
+
     def schritt(self):
         o, sens = self.o, self.cfg["sensoren"]
         jetzt = self._jetzt()
+        if self._schalter_aus():
+            # Pause: Sollwert gehört dem Nutzer; nach dem Einschalten startet der Regler beim Normalwert
+            if not self.pausiert:
+                self.pausiert, self.stufe, self.geaendert = True, 0, jetzt
+                self.ein_seit = self.hoch_seit = self.runter_seit = None
+                self._melden("pausiert – Sollwert wird nicht verändert", {})
+            elif self.status_zeit is None or self._seit(self.status_zeit, jetzt) >= 10:
+                self._status({})
+            return
+        if self.pausiert:
+            self.pausiert = False
+            self._melden("wieder aktiv", {})
         basis = float(o["pv_basis"])
         stufe_min, stufe_max = int(o["pv_min_anhebung"]), int(o["pv_max_anhebung"])
         soll = self._wert(o["pv_sollwert"])

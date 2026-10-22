@@ -374,7 +374,7 @@ def analyse(raw, cfg, start, end):
             ausblenden = angehoben | vorher
             B.meta["bewertet_ab"] = ab.strftime("%d.%m.%Y %H:%M")
             B.add("info", f"Heizkurve bewertet ab {ab:%d.%m. %H:%M}",
-                  f"Die Kurve wurde am {pd.Timestamp(hk['seit']).tz_convert(tz):%d.%m. um %H:%M} geändert. "
+                  f"Kurve oder Anlage wurden am {pd.Timestamp(hk['seit']).tz_convert(tz):%d.%m. um %H:%M} geändert. "
                   "Ältere Raumdaten gehören zur alten Einstellung und fließen nicht in die Bewertung ein; "
                   "die ersten 12 Stunden danach schwingt das Haus ein.")
 
@@ -501,15 +501,17 @@ def analyse(raw, cfg, start, end):
                   " ".join(teile) + " " + txt_basis +
                   (" Die rechnerische Änderung war größer; begrenzt auf max. 2 K pro Schritt." if gedeckelt else "") +
                   " Nach der Änderung 3–5 Tage laufen lassen und erneut auswerten.")
-        # Räume, die deutlich wärmer sind als der Führungsraum
-        warm = [r for r in raeume if r.get("abw") is not None and r["abw"] - fuehr["abw"] > 1.0]
-        if warm:
-            B.add("info", "Räume mit Überversorgung",
-                  ", ".join(f"{r['name']} ({r['abw']:+.1f} K)" for r in warm) +
-                  " sind deutlich wärmer als der Führungsraum. Dort regelt das AVM-Thermostat ab – die WP "
-                  "liefert aber trotzdem die hohe Vorlauftemperatur. Besser: hydraulischen Abgleich prüfen "
-                  "(Durchfluss an diesen Heizkörpern/Heizkreisen reduzieren), damit die Thermostate offen "
-                  "bleiben können.")
+
+    hydraulik_check(B, F, H, cfg, heiz.to_numpy(), angehoben, ausblenden)
+    # Ungleich versorgte Räume: erst abgleichen, eine höhere Kurve würde vor allem die warmen Räume heizen
+    if any(x["stufe"] == "aktion" and x["titel"].startswith("Abgleich:") for x in B.hinweise):
+        for x in B.hinweise:
+            if x["stufe"] == "aktion" and x["titel"].startswith("Heizkurve:"):
+                x["stufe"], x["titel"] = "info", "Zurückgestellt – " + x["titel"]
+                x["text"] = ("Erst den Abgleich verbessern: Die Räume sind ungleich versorgt, eine höhere Kurve würde "
+                             "vor allem die ohnehin warmen Räume heizen. " + x["text"])
+                k = B.meta["kurve"]
+                k["fp_neu"], k["ep_neu"] = k["fp_akt"], k["ep_akt"]
 
     if nacht_rooms:
         B.add("info", "Nachtabsenkung an AVM-Thermostaten",
@@ -579,7 +581,10 @@ def analyse(raw, cfg, start, end):
                       "Pumpenstufe/Abgleich prüfen.")
             elif med < 2.5:
                 B.add("info", f"Sehr kleine Spreizung ({med:.1f} K)",
-                      "Hoher Volumenstrom – für die WP effizient, aber ggf. unnötiger Pumpenstrom. Unkritisch.")
+                      "Sehr hoher Volumenstrom (für Heizkörper üblich: 4–6 K). Für die WP effizient, aber er kostet "
+                      "Pumpenstrom und verursacht Fließgeräusche. Mögliche Ursachen: Pumpe zu stark eingestellt oder "
+                      "Wasser fließt über Puffer, Weiche oder Überströmventil an den Heizkörpern vorbei. "
+                      "Installateur: Pumpe auf Regelung nach Spreizung (ca. 5 K) stellen – zusammen mit dem Abgleich.")
             else:
                 B.add("ok", f"Spreizung im Rahmen ({med:.1f} K)", "Vorlauf/Rücklauf-Differenz bei laufendem Verdichter ist gut.")
 
@@ -631,6 +636,91 @@ def analyse(raw, cfg, start, end):
         k = B.meta["kurve"]
         B.charts["kurve_neu"] = {"x": xs, "y": list(np.round(kurve(k["fp_neu"], k["ep_neu"], norm, xs), 2))}
     return B, F
+
+
+def aufheizzeit(ist, soll, beginn_h, ab=None):
+    """Median der Minuten vom Heizbeginn am Morgen, bis der Raum Soll − 0,5 K erreicht (max. 360)."""
+    werte = []
+    for tag, s in ist.groupby(ist.index.date):
+        t0 = pd.Timestamp(tag).tz_localize(ist.index.tz) + pd.Timedelta(hours=beginn_h)
+        if ab is not None and t0 < ab:
+            continue
+        f = s[(s.index >= t0) & (s.index < t0 + pd.Timedelta("6h"))].dropna()
+        if len(f) < 36:
+            continue
+        treffer = f[f >= soll - 0.5]
+        werte.append((treffer.index[0] - t0).total_seconds() / 60 if len(treffer) else 360)
+    return int(np.median(werte)) if werte else None
+
+
+def hydraulik_check(B, F, H, cfg, heiz, angehoben, ausblenden):
+    """Vergleicht die Räume untereinander: Wo kommt zu viel Wärme an, wo zu wenig?
+
+    Liegen die Räume unterschiedlich weit von ihrem Soll entfernt, hilft keine Kurve, sondern nur
+    der hydraulische Abgleich (Voreinstellung an den Thermostatventilen).
+    """
+    anl = cfg["anlage"]
+    tz = cfg["homeassistant"]["zeitzone"]
+    h = H.index.hour
+    komfort = (h >= anl["komfort_von"]) & (h < anl["komfort_bis"])
+    ab = pd.Timestamp(anl["geaendert"]).tz_convert(tz) if anl.get("geaendert") else None
+    zeilen = []
+    for room in cfg["raum"]:
+        n = room["name"]
+        ist, avm = H[f"{n}|ist"], H[f"{n}|soll_avm"]
+        soll = float(room.get("soll", anl["raum_soll"]))
+        z = {"name": n, "soll": soll}
+        m = komfort & heiz & ~ausblenden & ist.notna().to_numpy()
+        if m.sum() >= 6:
+            z["abw"] = round(float(ist[m].mean() - soll), 2)
+        g = m & avm.between(12, 27).to_numpy()
+        if g.sum() >= 6:  # Thermostat am Soll → Ventil regelt ab
+            z["drosselt"] = int(round(float(((ist - avm)[g] >= -0.25).mean() * 100)))
+        z["aufheizen_min"] = aufheizzeit(F[f"{n}|ist"], soll, max(anl["komfort_von"] - 1, 0),
+                                         ab + pd.Timedelta("12h") if ab is not None else None)
+        if ab is not None:
+            basis = komfort & heiz & ~angehoben & ist.notna().to_numpy()
+            vor = basis & (H.index >= ab - pd.Timedelta("7D")) & (H.index < ab)
+            nach = basis & (H.index >= ab + pd.Timedelta("12h"))
+            if vor.sum() >= 6:
+                z["vorher"] = round(float(ist[vor].mean()), 1)
+            if nach.sum() >= 6:
+                z["nachher"] = round(float(ist[nach].mean()), 1)
+        zeilen.append(z)
+    B.tabellen["hydraulik"] = zeilen
+    if ab is not None:
+        B.meta["anlage_geaendert"] = ab.strftime("%d.%m.%Y %H:%M")
+
+    mit = [z for z in zeilen if "abw" in z]
+    if len(mit) < 2:
+        return
+    kalt = min(mit, key=lambda z: z["abw"])
+    warm = max(mit, key=lambda z: z["abw"])
+    spanne = warm["abw"] - kalt["abw"]
+    if spanne <= 0.6:
+        B.add("ok", "Räume gleichmäßig versorgt",
+              f"Zwischen dem wärmsten und dem kühlsten Raum liegen nur {spanne:.1f} K – der Abgleich passt.")
+        return
+    if spanne <= 1.0:
+        return
+    if ab is not None and ab > H.index[-1] - pd.Timedelta("2D"):
+        B.add("info", "Abgleich wird beobachtet",
+              f"Seit der Änderung am {ab:%d.%m.} sind noch keine 2 Tage vergangen – erst danach gibt es einen "
+              f"neuen Vorschlag. Bisher: {warm['name']} {warm['abw']:+.1f} K, {kalt['name']} {kalt['abw']:+.1f} K.")
+        return
+    schritt = ("Voreinstellung am Thermostatventil um eine Stufe ändern (im unteren Bereich der Skala je 1 Stufe, "
+               "darüber 2), nur diesen einen Heizkörper, dann 2 Tage warten. Den Zeitpunkt in der Option "
+               "„anlage_geaendert“ eintragen, damit der Bericht vorher und nachher vergleicht.")
+    if warm["abw"] > 0.2:
+        B.add("aktion", f"Abgleich: {warm['name']} drosseln",
+              f"{warm['name']} liegt {warm['abw']:+.1f} K über seinem Soll, {kalt['name']} {kalt['abw']:+.1f} K. "
+              f"Weniger Durchfluss bei {warm['name']} lässt mehr Wasser für {kalt['name']} übrig. " + schritt)
+    else:
+        B.add("aktion", f"Abgleich: {kalt['name']} mehr Durchfluss",
+              f"{kalt['name']} liegt {kalt['abw']:+.1f} K unter seinem Soll, die anderen Räume sind nicht zu warm. "
+              f"Voreinstellung bei {kalt['name']} höher stellen und Rücklaufverschraubung ganz öffnen. Steht beides "
+              "schon auf Maximum, ist der Heizkörper für die niedrige Vorlauftemperatur zu klein – dann hilft ein "
+              "Heizkörperlüfter oder die Kurve. " + schritt)
 
 
 SENSOR_NAMEN = {"aussen": "Außentemperatur", "vorlauf": "Vorlauf", "ruecklauf": "Rücklauf",
@@ -721,7 +811,7 @@ def kurzfassung(B):
     m = B.meta
     teile = []
     kurve_titel = next((h["titel"] for h in B.hinweise
-                        if h["titel"].startswith(("Heizkurve:", "Heizkurve passt", "Vorläufiger Trend",
+                        if h["titel"].startswith(("Abgleich:", "Heizkurve:", "Heizkurve passt", "Vorläufiger Trend",
                                                   "Daten zur neuen Kurve"))), None)
     if kurve_titel:
         teile.append(kurve_titel)

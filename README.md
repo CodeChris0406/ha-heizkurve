@@ -1,10 +1,12 @@
 # Heizkurven-Analyse (Buderus-WP + AVM-Thermostate)
 
 Home-Assistant-Add-on, das den Verlauf von Wärmepumpe und Raumthermostaten auswertet und
-Vorschläge für **Fußpunkt** und **Endpunkt** der Heizkurve macht. Außerdem prüft es Takten,
-Spreizung, Nachtabsenkung und Arbeitszahl, überwacht die Sensoren und schickt Push-Nachrichten.
+Vorschläge für **Fußpunkt** und **Endpunkt** der Heizkurve sowie für den **hydraulischen Abgleich** macht.
+Außerdem prüft es Takten, Spreizung, Nachtabsenkung und Arbeitszahl, überwacht die Sensoren und schickt
+Push-Nachrichten. Optional hebt es bei PV-Überschuss den Komfort-Sollwert der Wärmepumpe an.
 
-Die Änderungen am Regler macht man selbst – das Add-on steuert nichts.
+Kurve und Ventile stellt man selbst ein – das Add-on gibt nur Empfehlungen. Der einzige Eingriff ist der
+optionale PV-Regler (Komfort-Sollwert).
 
 ## Funktionen
 
@@ -12,7 +14,10 @@ Die Änderungen am Regler macht man selbst – das Add-on steuert nichts.
 - Auswertung täglich zur eingestellten Uhrzeit, sofort über „Jetzt neu auswerten“
 - Eigener Datenspeicher (Standard 90 Tage), unabhängig von der Recorder-Aufbewahrung von HA
 - Kurvenänderungen erst ab 45 Stunden Raumdaten, vorher nur „vorläufiger Trend“
-- Nach einer Änderung von Fußpunkt/Endpunkt werden nur Raumdaten ab 12 h danach bewertet
+- Nach einer Änderung von Fußpunkt/Endpunkt oder an der Anlage (`anlage_geaendert`) werden nur Raumdaten ab 12 h danach bewertet
+- Hydraulik-Check: Abweichung je Raum, Aufheizzeit am Morgen, wie oft das Thermostat abregelt, Vorher/Nachher seit der
+  letzten Änderung – und welcher Heizkörper als Nächstes gedrosselt oder geöffnet werden sollte. Sind die Räume
+  ungleich versorgt, wird eine Kurvenanhebung zurückgestellt, bis der Abgleich passt.
 - Sensor-Wächter: nicht verfügbare oder hängende Werte, Zähler die trotz Verdichterlauf nicht steigen
 - Push-Nachrichten: neue Empfehlung/Warnung, Beginn einer Kältephase, Tages- oder Wochenbericht
 - Sensoren in HA:
@@ -30,22 +35,21 @@ Hebt den Komfort-Sollwert der Wärmepumpe in 1-K-Stufen an, solange Solarstrom �
   (Akku-Leistung aus `pv_akku_leistung`, Vorzeichen über `pv_akku_laden_positiv`). Zwischen zwei Änderungen mindestens 15 min,
   zurück auf den Normalwert frühestens nach 30 min. Sofort zurück bei Absenkbetrieb oder Akku < 85 %.
 - Der Regler hat das letzte Wort: Weicht der Sollwert von seiner Stufe ab (z. B. in der App geändert), setzt er ihn
-  zurück. Für manuelle Tests `pv_steuerung` vorübergehend ausschalten.
-- Status: `sensor.heizkurve_pv_anhebung` (`an`/`aus`, Attribut `grund`). Angehobene Stunden werden
+  zurück. Zum Pausieren einen Schalter (`input_boolean`) in `pv_schalter` eintragen: Steht er auf „aus“, rührt der
+  Regler den Sollwert nicht an; nach dem Einschalten startet er beim Normalwert.
+- Status: `sensor.heizkurve_pv_anhebung` (`an`/`aus`/`pausiert`, Attribut `grund`). Angehobene Stunden werden
   (samt 3 h Nachlauf) nicht für die Heizkurven-Bewertung verwendet.
 
-## Installation (lokales Add-on)
+## Installation
 
 Voraussetzung: Home Assistant OS oder Supervised.
 
-1. Den Ordner `heizkurve/` nach `/addons/heizkurve/` kopieren, z. B. über Studio Code Server oder Samba.
-   Liegen die Dateien in `/share/heizkurve`, im Terminal des Studio Code Servers:
-   ```bash
-   cp -r /share/heizkurve/. /addons/heizkurve/
-   ```
-2. **Einstellungen → Add-ons → Add-on-Store → ⋮ → Nach Updates suchen** → unter „Lokale Add-ons“
-   **Heizkurven-Analyse** installieren bzw. aktualisieren.
-3. Reiter **Konfiguration** prüfen, starten, „In Seitenleiste anzeigen“ aktivieren.
+1. **Einstellungen → Add-ons → Add-on-Store → ⋮ → Repositories** und
+   `https://github.com/CodeChris0406/ha-heizkurve` hinzufügen.
+2. **Heizkurven-Analyse** installieren, Reiter **Konfiguration** ausfüllen, starten,
+   „In Seitenleiste anzeigen“ und „Automatisch aktualisieren“ aktivieren.
+
+Neue Versionen erscheinen danach unter **Einstellungen → Updates** und werden automatisch installiert.
 
 Wird ein Sensor `aussen` leer gelassen, listet das Protokoll beim Start alle passenden Entitäten auf.
 
@@ -63,6 +67,8 @@ Wird ein Sensor `aussen` leer gelassen, listet das Protokoll beim Start alle pas
 | `fusspunkt`, `endpunkt`, `norm_aussen`, `max_vorlauf` | aktuelle Reglereinstellung (0 = aus Messdaten schätzen) |
 | `sensoren` | Entity-IDs; `entity#attribut` liest ein Attribut statt des Zustands |
 | `raeume` | `name`, `entity` (climate oder Temperatursensor), optional `soll`, `fuehrend: false` |
+| `anlage_geaendert` | Zeitpunkt der letzten Änderung an Ventilen/Pumpe, z. B. `2026-10-22 18:30` – Bewertung beginnt danach neu |
+| `pv_…` | PV-Regler, siehe oben; `pv_schalter` = optionaler Pause-Schalter |
 
 ### Sensoren
 

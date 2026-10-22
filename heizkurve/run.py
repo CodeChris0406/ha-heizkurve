@@ -47,6 +47,17 @@ def build_config(o):
         cfg["homeassistant"]["zeitzone"] = sess.get(f"{base}/api/config", timeout=30).json()["time_zone"]
     except Exception:
         pass
+    # Änderung an der Anlage (z. B. Voreinstellung der Ventile): Bewertung danach neu beginnen
+    if (o.get("anlage_geaendert") or "").strip():
+        try:
+            geaendert = pd.Timestamp(o["anlage_geaendert"].strip())
+            if geaendert.tzinfo is None:
+                geaendert = geaendert.tz_localize(cfg["homeassistant"]["zeitzone"])
+            cfg["anlage"]["geaendert"] = geaendert.isoformat()
+            if geaendert > pd.Timestamp(cfg["heizkurve"]["seit"]):
+                cfg["heizkurve"]["seit"] = geaendert.isoformat()
+        except ValueError:
+            print(f"Option anlage_geaendert nicht lesbar: {o['anlage_geaendert']!r} (Format z. B. 2026-10-22 18:30)")
     return cfg
 
 

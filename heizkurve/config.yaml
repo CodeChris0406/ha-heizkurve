@@ -1,5 +1,5 @@
 name: Heizkurven-Analyse
-version: "0.7.1"
+version: "0.8.0"
 slug: heizkurve
 description: Wertet Wärmepumpe und Raumthermostate aus und schlägt Änderungen an der Heizkurve vor
 arch:
@@ -43,6 +43,8 @@ options:
   pv_akku_leistung: ""
   pv_akku_laden_positiv: true
   pv_entladung_w: 100
+  pv_schalter: ""
+  anlage_geaendert: ""
   sensoren:
     aussen: ""
     vorlauf: ""
@@ -88,6 +90,8 @@ schema:
   pv_akku_leistung: str
   pv_akku_laden_positiv: bool
   pv_entladung_w: int
+  pv_schalter: str
+  anlage_geaendert: str
   sensoren:
     aussen: str
     vorlauf: str
