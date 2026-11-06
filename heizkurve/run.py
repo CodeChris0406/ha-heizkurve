@@ -184,7 +184,7 @@ def sensor_waechter(cfg):
 
 
 def pv_schleife(o, cfg):
-    """Prüft jede Minute, ob der Komfort-Sollwert wegen PV-Überschuss angehoben werden soll."""
+    """Prüft alle 30 Sekunden, ob der Komfort-Sollwert wegen PV-Überschuss angehoben werden soll."""
     regler = PVRegler(o, cfg)
     letzter_fehler = None
     while True:
@@ -195,7 +195,7 @@ def pv_schleife(o, cfg):
             if str(e) != letzter_fehler:  # gleiche Fehler nicht jede Minute wiederholen
                 print(f"PV-Regler: Fehler: {e}")
                 letzter_fehler = str(e)
-        time.sleep(60)
+        time.sleep(30)
 
 
 def main():

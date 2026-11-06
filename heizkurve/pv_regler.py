@@ -20,9 +20,9 @@ class PVRegler:
 
     EIN_MIN = 10        # so lange muss der Start-Überschuss anliegen
     HOCH_MIN = 10       # so lange muss der Überschuss für die nächste Stufe anliegen
-    RUNTER_MIN = 3      # so lange muss Netzbezug / Akku-Entladung anliegen
+    RUNTER_MIN = 0.5    # so lange muss Netzbezug / Akku-Entladung anliegen
     SCHRITT_MIN = 15    # Mindestabstand vor der nächsten Anhebung (WP muss reagieren)
-    RUNTER_ABSTAND_MIN = 5  # Mindestabstand vor dem nächsten Zurücknehmen
+    RUNTER_ABSTAND_MIN = 0.5  # Mindestabstand vor dem nächsten Zurücknehmen
     MIN_LAUF_MIN = 30   # Anhebung mindestens so lange halten, bevor zurück auf den Normalwert
     PAUSE_MIN = 30      # nach dem Zurücksetzen frühestens wieder anheben
     SOC_AUS = 85        # Akku darunter → sofort zurück auf den Normalwert
@@ -132,12 +132,15 @@ class PVRegler:
             self._status(werte)
 
         ziel = basis + self.stufe
-        if abs(soll - ziel) >= 0.05:
+        unterwegs = self.gesendet is not None and self._seit(self.gesendet, jetzt) < self.CLOUD_MIN
+        if abs(soll - ziel) >= 0.05 and not unterwegs:
             # Abweichung (z. B. in der App geändert) → zurück auf die Stufe des Reglers
-            if self._seit(self.gesendet, jetzt) >= self.CLOUD_MIN or self.gesendet is None:
-                self._senden(ziel, jetzt)
-                self._melden(f"Sollwert {soll:g} °C → {ziel:g} °C korrigiert (+{self.stufe} K)", werte)
+            self._senden(ziel, jetzt)
+            self._melden(f"Sollwert {soll:g} °C → {ziel:g} °C korrigiert (+{self.stufe} K)", werte)
             return
+        if abs(soll - ziel) >= 0.05 and self.stufe > 0 and not (
+                netz > o["pv_bezug_w"] or entladung > o.get("pv_entladung_w", 100)):
+            return  # eigener Befehl noch unterwegs zur Bosch-Cloud – nur fürs Zurücknehmen nicht warten
 
         if self.stufe == 0:
             bereit = (phase >= basis - 0.05 and soc >= o["pv_akku_min"]
