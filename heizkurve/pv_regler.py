@@ -12,7 +12,7 @@ STATUS_SENSOR = "sensor.heizkurve_pv_anhebung"
 
 class PVRegler:
     """Hebt den Komfort-Sollwert in 1-K-Stufen an, solange Überschuss anliegt, und nimmt ihn
-    bei Netzbezug stufenweise zurück.
+    bei Netzbezug oder Akku-Entladung zurück (bei großem Defizit mehrere Stufen auf einmal).
 
     Der Regler hat das letzte Wort: Weicht der Sollwert von seiner Stufe ab (z. B. weil er in
     der App geändert wurde), setzt er ihn zurück.
@@ -20,8 +20,9 @@ class PVRegler:
 
     EIN_MIN = 10        # so lange muss der Start-Überschuss anliegen
     HOCH_MIN = 10       # so lange muss der Überschuss für die nächste Stufe anliegen
-    RUNTER_MIN = 5      # so lange muss Netzbezug anliegen
-    SCHRITT_MIN = 15    # Mindestabstand zwischen zwei Änderungen (WP muss reagieren)
+    RUNTER_MIN = 3      # so lange muss Netzbezug / Akku-Entladung anliegen
+    SCHRITT_MIN = 15    # Mindestabstand vor der nächsten Anhebung (WP muss reagieren)
+    RUNTER_ABSTAND_MIN = 5  # Mindestabstand vor dem nächsten Zurücknehmen
     MIN_LAUF_MIN = 30   # Anhebung mindestens so lange halten, bevor zurück auf den Normalwert
     PAUSE_MIN = 30      # nach dem Zurücksetzen frühestens wieder anheben
     SOC_AUS = 85        # Akku darunter → sofort zurück auf den Normalwert
@@ -153,18 +154,22 @@ class PVRegler:
         if soc < self.SOC_AUS:
             return self._setzen(0, jetzt, f"Akku unter {self.SOC_AUS} %", werte)
 
-        # eine Stufe zurück, sobald Strom aus dem Netz oder aus dem Akku kommt
+        # zurück, sobald Strom aus dem Netz oder aus dem Akku kommt – je größer das Defizit,
+        # desto mehr Stufen auf einmal (eine Stufe je pv_schritt_w)
         zu_wenig = netz > o["pv_bezug_w"] or entladung > o.get("pv_entladung_w", 100)
         self.runter_seit = (self.runter_seit or jetzt) if zu_wenig else None
         self.hoch_seit = (self.hoch_seit or jetzt) if ueberschuss >= o["pv_schritt_w"] else None
-        if seit_aenderung < self.SCHRITT_MIN:
-            return
-        if self.runter_seit is not None and self._seit(self.runter_seit, jetzt) >= self.RUNTER_MIN:
-            neu = self.stufe - 1 if self.stufe > stufe_min else 0
+        if (self.runter_seit is not None and self._seit(self.runter_seit, jetzt) >= self.RUNTER_MIN
+                and seit_aenderung >= self.RUNTER_ABSTAND_MIN):
+            defizit = max(netz, entladung)
+            n = max(1, int(defizit / max(o["pv_schritt_w"], 1) + 0.5))
+            neu = self.stufe - n if self.stufe - n >= stufe_min else 0
             if neu == 0 and self._seit(self.aktiv_seit, jetzt) < self.MIN_LAUF_MIN:
-                return
+                neu = stufe_min if self.stufe > stufe_min else self.stufe
+                if neu == self.stufe:
+                    return
             grund = f"Netzbezug {netz:.0f} W" if netz > o["pv_bezug_w"] else f"Akku entlädt {entladung:.0f} W"
             self._setzen(neu, jetzt, grund, werte)
         elif (self.hoch_seit is not None and self._seit(self.hoch_seit, jetzt) >= self.HOCH_MIN
-              and self.stufe < stufe_max):
+              and seit_aenderung >= self.SCHRITT_MIN and self.stufe < stufe_max):
             self._setzen(self.stufe + 1, jetzt, f"weiter Überschuss {ueberschuss:.0f} W", werte)
