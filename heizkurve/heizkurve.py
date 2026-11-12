@@ -319,23 +319,26 @@ def strom_nach_zweck(B, F):
                        if "heizstab_leistung" in F else pd.Series(0.0, index=tage))
     waerme = {}
     if "waerme_energie" in F:
+        q_voll = F["waerme_energie"].notna().resample("D").sum().reindex(tage).fillna(0) >= 280
         dq = F["waerme_energie"].diff()
         dq = dq.where((dq >= 0) & (dq < 5), 0)  # Zählersprünge/Neustarts ignorieren
         for k in ("heizung", "ww_wp"):
-            waerme[k] = dq.where(teile[k], 0).resample("D").sum().reindex(tage)
+            # nur Tage, an denen der Wärmezähler vollständig ist (sonst Lücke = 0 → falsche Arbeitszahl)
+            waerme[k] = dq.where(teile[k], 0).resample("D").sum().reindex(tage).where(q_voll)
     aussen = F["aussen"].resample("D").mean().reindex(tage) if "aussen" in F else pd.Series(np.nan, index=tage)
     r1 = lambda x: round(float(x), 1)
     B.tabellen["strom_zweck"] = [
         {"tag": t.strftime("%d.%m."), "aussen": None if pd.isna(aussen[t]) else r1(aussen[t]),
          **{k: r1(v[t]) for k, v in tag.items()},
-         **{f"waerme_{k}": r1(v[t]) for k, v in waerme.items()}} for t in tage]
+         **{f"waerme_{k}": None if pd.isna(v[t]) else r1(v[t]) for k, v in waerme.items()}} for t in tage]
     B.charts["strom_zweck"] = {"tag": [t.strftime("%d.%m.") for t in tage],
                                **{k: [r1(x) for x in v] for k, v in tag.items()}}
     summe = {k: r1(v.sum()) for k, v in tag.items()}
     cop = {}
     for k, v in waerme.items():
-        if summe[k] >= 1 and v.sum() > 0:
-            cop[k] = round(float(v.sum()) / summe[k], 2)
+        el = tag[k][v.notna()].sum()
+        if el >= 1 and v.sum() > 0:
+            cop[k] = round(float(v.sum()) / float(el), 2)
     B.meta["strom_zweck"] = {**summe, "tage": len(tage), "cop": cop}
     wp = summe["heizung"] + summe["ww_wp"] + summe["bereit"]
     ww = summe["ww_wp"] + summe["heizstab"]
@@ -675,7 +678,8 @@ def analyse(raw, cfg, start, end):
     # ---- Effizienz
     if ("strom_energie" in F or wp_tag is not None) and "waerme_energie" in F:
         st = wp_tag if wp_tag is not None else tagesdiff(F["strom_energie"])
-        wa = tagesdiff(F["waerme_energie"]).reindex(st.index)
+        wa = tagesdiff(F["waerme_energie"]).where(
+            F["waerme_energie"].notna().resample("D").sum() >= 280).reindex(st.index)  # nur volle Zählertage
         ok = (st > 0.5) & wa.notna()
         if ok.sum() >= 2:
             cop = (wa[ok] / st[ok])
