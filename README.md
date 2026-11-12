@@ -18,6 +18,7 @@ optionale PV-Regler (Komfort-Sollwert).
 - Hydraulik-Check: Abweichung je Raum, Aufheizzeit am Morgen, wie oft das Thermostat abregelt, Vorher/Nachher seit der
   letzten Änderung – und welcher Heizkörper als Nächstes gedrosselt oder geöffnet werden sollte. Sind die Räume
   ungleich versorgt, wird eine Kurvenanhebung zurückgestellt, bis der Abgleich passt.
+- Strom nach Zweck: Heizen, Warmwasser (WP), Heizstab und Bereitschaft pro Tag – mit `waerme_energie` auch die Arbeitszahl je Zweck
 - Sensor-Wächter: nicht verfügbare oder hängende Werte, Zähler die trotz Verdichterlauf nicht steigen
 - Push-Nachrichten: neue Empfehlung/Warnung, Beginn einer Kältephase, Tages- oder Wochenbericht
 - Sensoren in HA:
@@ -83,6 +84,7 @@ Wird ein Sensor `aussen` leer gelassen, listet das Protokoll beim Start alle pas
 | strom_leistung | elektrische Leistung in W (Alternative zu `kompressor`) | optional |
 | heizstab_leistung | Leistung eines Heizstabs, den `strom_leistung` mitmisst – wird abgezogen | optional |
 | strom_energie / waerme_energie | Zählerstände in kWh | für Arbeitszahl |
+| kompressor_status | Betriebsart des Verdichters (z. B. `heating`/`dhw`/`defrost`/`off`) | für „Strom nach Zweck“ |
 
 ## So entsteht der Vorschlag
 

@@ -1,5 +1,5 @@
 name: Heizkurven-Analyse
-version: "0.8.2"
+version: "0.9.0"
 slug: heizkurve
 description: Wertet Wärmepumpe und Raumthermostate aus und schlägt Änderungen an der Heizkurve vor
 arch:
@@ -57,6 +57,7 @@ options:
     strom_energie: ""
     waerme_energie: ""
     wp_raum_soll: ""
+    kompressor_status: ""
   raeume: []
 schema:
   auswerten_um: int(0,23)
@@ -104,6 +105,7 @@ schema:
     strom_energie: str
     waerme_energie: str
     wp_raum_soll: str
+    kompressor_status: str?
   raeume:
     - name: str
       entity: str

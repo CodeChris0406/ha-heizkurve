@@ -69,6 +69,7 @@ th { font-size: 13px; color: var(--muted); font-weight: 600; }
   <h2>Abweichung vom Soll über Außentemperatur</h2>
   <p class="sub">Steigt die Punktwolke nach rechts an, sind die Räume bei Kälte zu kalt → Kurve steiler. Liegt sie insgesamt über/unter 0 → Kurve parallel verschieben.</p>
   <div class="card"><div class="chart" id="ch_abw"></div></div>
+  <div id="zweckblock"></div>
   <div id="taktblock"></div>
   <div id="copblock"></div>
 </main>
@@ -164,6 +165,25 @@ function render() {
   plot('ch_abw', at, layout({xaxis: {title: 'Außentemperatur (12 h Mittel) °C', gridcolor: css('--grid')},
     yaxis: {title: 'Ist − Soll (K)', gridcolor: css('--grid'), zerolinecolor: css('--fg'), zerolinewidth: 1.5}}), cfg);
 
+  if (C.strom_zweck && m.strom_zweck) {
+    const z = C.strom_zweck, s = m.strom_zweck, cop = s.cop || {};
+    const wp = s.heizung + s.ww_wp + s.bereit, pz = x => wp > 0 ? ` (${fmt(100 * x / wp, 0)} %)` : '';
+    document.getElementById('zweckblock').innerHTML = `<h2>Strom nach Zweck</h2>
+      <p class="sub">${s.tage} volle Tage. Aufteilung nach dem Kompressorstatus der Wärmepumpe; Abtauen zählt zur Betriebsart davor.</p>
+      <div class="scroll"><table><tr><th>Zweck</th><th>Strom</th><th>Arbeitszahl</th></tr>
+      <tr><td>Heizen (WP)</td><td>${fmt(s.heizung, 0)} kWh${pz(s.heizung)}</td><td>${fmt(cop.heizung, 2)}</td></tr>
+      <tr><td>Warmwasser (WP)</td><td>${fmt(s.ww_wp, 0)} kWh${pz(s.ww_wp)}</td><td>${fmt(cop.ww_wp, 2)}</td></tr>
+      <tr><td>Bereitschaft (Pumpen, Regelung)</td><td>${fmt(s.bereit, 0)} kWh${pz(s.bereit)}</td><td>–</td></tr>
+      <tr><td>Warmwasser (Heizstab)</td><td>${fmt(s.heizstab, 0)} kWh</td><td>1,00</td></tr>
+      <tr><th>Warmwasser gesamt</th><th>${fmt(s.ww_wp + s.heizstab, 0)} kWh</th><th></th></tr>
+      </table></div><div class="card"><div class="chart" id="ch_zweck"></div></div>`;
+    plot('ch_zweck', [
+      {x: z.tag, y: z.heizung, type: 'bar', name: 'Heizen (WP)', marker: {color: f[0]}},
+      {x: z.tag, y: z.ww_wp, type: 'bar', name: 'Warmwasser (WP)', marker: {color: f[1]}},
+      {x: z.tag, y: z.heizstab, type: 'bar', name: 'Warmwasser (Heizstab)', marker: {color: f[2]}},
+      {x: z.tag, y: z.bereit, type: 'bar', name: 'Bereitschaft', marker: {color: css('--muted')}}
+    ], layout({barmode: 'stack', hovermode: 'x unified', yaxis: {title: 'kWh pro Tag', gridcolor: css('--grid')}}), cfg);
+  }
   if (C.takten) {
     document.getElementById('taktblock').innerHTML = '<h2>Verdichter-Starts pro Tag</h2><div class="card"><div class="chart" id="ch_takt"></div></div>';
     plot('ch_takt', [

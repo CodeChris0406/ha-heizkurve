@@ -25,7 +25,20 @@ STORE = DATEN / "verlauf.csv"
 
 SENSOR_KEYS = ["aussen", "vorlauf", "vorlauf_soll", "ruecklauf", "kompressor",
                "kompressor_starts", "strom_leistung", "heizstab_leistung", "strom_energie", "waerme_energie",
-               "wp_raum_soll"]
+               "wp_raum_soll", "kompressor_status"]
+# Betriebsart des Verdichters (Text-Zustand) → Code: 0 aus, 1 Heizen, 2 Warmwasser, 3 Abtauen, 4 Kühlen
+MODUS_WOERTER = {1: ("heating", "heizen", "heat", "ch"), 2: ("dhw", "warmwasser", "hot_water", "hotwater", "ww"),
+                 3: ("defrost", "abtauen"), 4: ("cooling", "kuehlen", "kühlen", "cool")}
+
+
+def modus_code(state):
+    txt = str(state).strip().lower() if state is not None else ""
+    if txt in NA_WORDS:
+        return np.nan
+    for code, woerter in MODUS_WOERTER.items():
+        if txt in woerter:
+            return float(code)
+    return 0.0
 OFF_WORDS = {"off", "aus", "false", "none", "idle", "standby", "0", "inactive", "stop",
              "stopped", "kein", "keine", "no", "nein", "aus/off"}
 NA_WORDS = {"unavailable", "unknown", "", "none_", "nan"}
@@ -98,6 +111,7 @@ def fetch_history(cfg, days):
     start = end - dt.timedelta(days=days)
     sens = cfg["sensoren"]
     text_ids = {sens.get("kompressor")} - {"", None}
+    modus_id = sens.get("kompressor_status") or None
     rooms = cfg["raum"]
     # Schreibweise "entity#attribut" liest ein Attribut statt des Zustands
     specs = [v for v in sens.values() if v] + [r["entity"] for r in rooms if not r["entity"].startswith("climate.")]
@@ -127,7 +141,8 @@ def fetch_history(cfg, days):
                 eid = lst[0]["entity_id"]
                 for it in lst:
                     ts = it.get("last_changed") or it.get("last_updated")
-                    rows.append((ts, eid, to_value(it.get("state"), eid in text_ids)))
+                    v = modus_code(it.get("state")) if eid == modus_id else to_value(it.get("state"), eid in text_ids)
+                    rows.append((ts, eid, v))
         if clim:
             r = sess.get(f"{base}/api/history/period/{iso(t)}", timeout=180,
                          params={**common, "filter_entity_id": ",".join(clim)})
@@ -281,6 +296,57 @@ class Bericht:
 
     def add(self, stufe, titel, text):
         self.hinweise.append({"stufe": stufe, "titel": titel, "text": text})
+
+
+def strom_nach_zweck(B, F):
+    """Strom (und, wenn vorhanden, Wärme) der WP nach Betriebsart aufteilen: Heizen, Warmwasser, Bereitschaft.
+
+    Grundlage ist die gemessene Leistung (ohne Heizstab) und der Kompressorstatus der WP; Abtauphasen
+    zählen zur Betriebsart davor. Nur volle Tage mit Status- und Leistungsdaten werden gewertet.
+    """
+    if "kompressor_status" not in F or "strom_leistung" not in F:
+        return
+    modus = F["kompressor_status"]
+    modus = modus.where(modus != 3).ffill(limit=12)  # Abtauen → vorherige Betriebsart
+    kwh = F["strom_leistung"] * (5 / 60) / 1000
+    voll = (modus.notna() & F["strom_leistung"].notna()).resample("D").sum() >= 280
+    tage = voll[voll].index
+    if not len(tage):
+        return
+    teile = {"heizung": modus.isin([1, 4]), "ww_wp": modus == 2, "bereit": modus == 0}
+    tag = {k: kwh.where(m, 0).resample("D").sum().reindex(tage) for k, m in teile.items()}
+    tag["heizstab"] = ((F["heizstab_leistung"].fillna(0) * (5 / 60) / 1000).resample("D").sum().reindex(tage)
+                       if "heizstab_leistung" in F else pd.Series(0.0, index=tage))
+    waerme = {}
+    if "waerme_energie" in F:
+        dq = F["waerme_energie"].diff()
+        dq = dq.where((dq >= 0) & (dq < 5), 0)  # Zählersprünge/Neustarts ignorieren
+        for k in ("heizung", "ww_wp"):
+            waerme[k] = dq.where(teile[k], 0).resample("D").sum().reindex(tage)
+    aussen = F["aussen"].resample("D").mean().reindex(tage) if "aussen" in F else pd.Series(np.nan, index=tage)
+    r1 = lambda x: round(float(x), 1)
+    B.tabellen["strom_zweck"] = [
+        {"tag": t.strftime("%d.%m."), "aussen": None if pd.isna(aussen[t]) else r1(aussen[t]),
+         **{k: r1(v[t]) for k, v in tag.items()},
+         **{f"waerme_{k}": r1(v[t]) for k, v in waerme.items()}} for t in tage]
+    B.charts["strom_zweck"] = {"tag": [t.strftime("%d.%m.") for t in tage],
+                               **{k: [r1(x) for x in v] for k, v in tag.items()}}
+    summe = {k: r1(v.sum()) for k, v in tag.items()}
+    cop = {}
+    for k, v in waerme.items():
+        if summe[k] >= 1 and v.sum() > 0:
+            cop[k] = round(float(v.sum()) / summe[k], 2)
+    B.meta["strom_zweck"] = {**summe, "tage": len(tage), "cop": cop}
+    wp = summe["heizung"] + summe["ww_wp"] + summe["bereit"]
+    ww = summe["ww_wp"] + summe["heizstab"]
+    anteil = lambda x: f"{100 * x / wp:.0f} %" if wp > 0 else "–"
+    text = (f"Über {len(tage)} volle Tage: Heizen {summe['heizung']:.0f} kWh ({anteil(summe['heizung'])} des WP-Stroms), "
+            f"Warmwasser per WP {summe['ww_wp']:.0f} kWh ({anteil(summe['ww_wp'])}), Bereitschaft (Pumpen, Regelung, "
+            f"Verdichter aus) {summe['bereit']:.0f} kWh. Dazu Heizstab (nur Warmwasser) {summe['heizstab']:.0f} kWh – "
+            f"Warmwasser gesamt {ww:.0f} kWh Strom.")
+    if cop:
+        text += " Arbeitszahl " + ", ".join(f"{'Heizen' if k == 'heizung' else 'Warmwasser'} {v:.2f}" for k, v in cop.items()) + "."
+    B.add("info", f"Strom nach Zweck: Heizen {summe['heizung']:.0f} kWh · Warmwasser {ww:.0f} kWh", text)
 
 
 def analyse(raw, cfg, start, end):
@@ -603,6 +669,8 @@ def analyse(raw, cfg, start, end):
                   f"Der Leistungsmesser erfasst Wärmepumpe und PV-Heizstab gemeinsam; der Heizstab "
                   f"(Ø {hs_tag.mean():.1f} kWh/Tag) wird abgezogen. Letzter voller Tag: "
                   f"WP {wp_tag.iloc[-1]:.1f} kWh, Heizstab {hs_tag.iloc[-1]:.1f} kWh.")
+
+    strom_nach_zweck(B, F)
 
     # ---- Effizienz
     if ("strom_energie" in F or wp_tag is not None) and "waerme_energie" in F:
