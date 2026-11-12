@@ -1,5 +1,5 @@
 name: Heizkurven-Analyse
-version: "0.9.0"
+version: "0.9.1"
 slug: heizkurve
 description: Wertet Wärmepumpe und Raumthermostate aus und schlägt Änderungen an der Heizkurve vor
 arch:

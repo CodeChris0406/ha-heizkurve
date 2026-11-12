@@ -67,6 +67,10 @@ def auswertung(o, cfg):
     if len(raw):
         seit = (pd.Timestamp.now(tz="UTC") - raw["ts"].max()).total_seconds() / 86400
         tage = max(1, min(10, int(seit) + 1))
+        # neu eingetragener Sensor → Verlauf der letzten 10 Tage nachladen
+        bekannt = set(raw["key"].unique())
+        if any(e and e not in bekannt for e in cfg["sensoren"].values()):
+            tage = 10
     print(f"Hole {tage} Tag(e) aus Home Assistant …")
     raw = hk.merge_store(raw, hk.fetch_history(cfg, tage), o["aufbewahren_tage"])
     if raw["value"].notna().sum() == 0:
